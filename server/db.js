@@ -76,6 +76,7 @@ initSchema().catch(err => console.error('Schema init error:', err));
 module.exports = {
   db,
   isPg,
+  initSchema,
   // Helper to normalize queries if needed
   query: (text, params) => isPg ? db.query(text, params) : new Promise((resolve, reject) => {
     db.all(text, params, (err, rows) => err ? reject(err) : resolve({ rows }));
