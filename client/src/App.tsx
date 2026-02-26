@@ -1,15 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
-} from 'recharts';
-import { 
-  Users, DollarSign, Package, PlusCircle, LayoutDashboard, Send, CheckCircle, 
-  FileDown, FileSpreadsheet, Download, Trash2, ShoppingBag, Plus, X, MessageCircle
+  Users, DollarSign, Package, PlusCircle, LayoutDashboard, Send, 
+  FileDown, Trash2, Plus, X, MessageCircle
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import * as XLSX from 'xlsx';
 import './App.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
@@ -47,7 +43,6 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
   const [view, setView] = useState<'dashboard' | 'entry' | 'login'>('dashboard');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [trend, setTrend] = useState<any[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [loginData, setLoginData] = useState({ username: '', password: '' });
@@ -111,13 +106,11 @@ function App() {
     if (!isAuthenticated) return;
     try {
       setLoading(true);
-      const [statsRes, trendRes, billsRes] = await Promise.all([
+      const [statsRes, billsRes] = await Promise.all([
         axios.get(`${API_BASE}/stats`, getHeaders()),
-        axios.get(`${API_BASE}/sales-trend`, getHeaders()),
         axios.get(`${API_BASE}/bills`, getHeaders())
       ]);
       setStats(statsRes.data);
-      setTrend(trendRes.data);
       setBills(billsRes.data);
     } catch (error: any) { 
       console.error('Fetch error:', error);
@@ -396,6 +389,8 @@ function App() {
             </div>
           </form>
         </div>
+      )}
+        </>
       )}
     </div>
   );
