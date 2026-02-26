@@ -78,19 +78,33 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
+  console.log(`Login attempt for user: ${username}`);
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
   try {
     const { rows } = await runQuery("SELECT * FROM users WHERE username = ?", [username]);
     const user = rows[0];
-    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (!user) {
+      console.log('Login failed: User not found');
+      return res.status(400).json({ error: 'User not found' });
+    }
 
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) return res.status(400).json({ error: 'Invalid password' });
+    if (!validPassword) {
+      console.log('Login failed: Invalid password');
+      return res.status(400).json({ error: 'Invalid password' });
+    }
+
+    if (!JWT_SECRET) {
+      console.error('CRITICAL: JWT_SECRET is not defined in environment variables');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
 
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
+    console.log('Login successful');
     res.json({ token, username: user.username });
   } catch (err) {
+    console.error('Login error:', err.message);
     res.status(400).json({ error: err.message });
   }
 });
