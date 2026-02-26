@@ -12,7 +12,7 @@ import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import './App.css';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
 declare module 'jspdf' {
   interface jsPDF { autoTable: (options: any) => jsPDF; }
@@ -44,11 +44,14 @@ type Stats = {
 };
 
 function App() {
-  const [view, setView] = useState<'dashboard' | 'entry'>('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
+  const [view, setView] = useState<'dashboard' | 'entry' | 'login'>('dashboard');
   const [stats, setStats] = useState<Stats | null>(null);
   const [trend, setTrend] = useState<any[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loginData, setLoginData] = useState({ username: '', password: '' });
+  const [authError, setAuthError] = useState('');
 
   // Bill Form State
   const [customerInfo, setCustomerInfo] = useState({
@@ -62,6 +65,31 @@ function App() {
     { product_name: '', pieces: 0, rate: 0, total: 0 }
   ]);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
+
+  const getHeaders = () => ({
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  });
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      const res = await axios.post(`${API_BASE}/auth/login`, loginData);
+      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('username', res.data.username);
+      setIsAuthenticated(true);
+      setView('dashboard');
+    } catch (err: any) {
+      setAuthError(err.response?.data?.error || 'Login failed');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    setIsAuthenticated(false);
+    setView('login');
+  };
 
   const shareWhatsApp = (bill: Bill) => {
     if (!bill.customer_phone) {
@@ -80,21 +108,33 @@ function App() {
   const totalPieces = useMemo(() => items.reduce((sum, item) => sum + (Number(item.pieces) || 0), 0), [items]);
 
   const fetchData = async () => {
+    if (!isAuthenticated) return;
     try {
       setLoading(true);
       const [statsRes, trendRes, billsRes] = await Promise.all([
-        axios.get(`${API_BASE}/stats`),
-        axios.get(`${API_BASE}/sales-trend`),
-        axios.get(`${API_BASE}/bills`)
+        axios.get(`${API_BASE}/stats`, getHeaders()),
+        axios.get(`${API_BASE}/sales-trend`, getHeaders()),
+        axios.get(`${API_BASE}/bills`, getHeaders())
       ]);
       setStats(statsRes.data);
       setTrend(trendRes.data);
       setBills(billsRes.data);
-    } catch (error) { console.error('Fetch error:', error); }
+    } catch (error: any) { 
+      console.error('Fetch error:', error);
+      if (error.response?.status === 403 || error.response?.status === 401) {
+        handleLogout();
+      }
+    }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    if (isAuthenticated) {
+      fetchData();
+    } else {
+      setView('login');
+    }
+  }, [isAuthenticated]);
 
   const handleItemChange = (index: number, field: keyof BillItem, value: string) => {
     const newItems = [...items];
@@ -115,7 +155,7 @@ function App() {
 
   const generatePDF = async (bill: Bill) => {
     try {
-      const itemsRes = await axios.get(`${API_BASE}/bills/${bill.id}/items`);
+      const itemsRes = await axios.get(`${API_BASE}/bills/${bill.id}/items`, getHeaders());
       const billItems = itemsRes.data;
       const doc = new jsPDF();
       
@@ -156,7 +196,7 @@ function App() {
   const deleteBill = async (id: number) => {
     if (!window.confirm('Delete this bill forever?')) return;
     try {
-      await axios.delete(`${API_BASE}/bills/${id}`);
+      await axios.delete(`${API_BASE}/bills/${id}`, getHeaders());
       fetchData();
     } catch (err) { console.error('Delete fail:', err); }
   };
@@ -174,7 +214,7 @@ function App() {
         items,
         grand_total: grandTotal,
         total_pieces: totalPieces
-      });
+      }, getHeaders());
       setSubmitStatus('Saved Successfully!');
       setCustomerInfo({ name: '', phone: '', email: '', address: '' });
       setItems([{ product_name: '', pieces: 0, rate: 0, total: 0 }]);
@@ -185,18 +225,55 @@ function App() {
 
   return (
     <div className="app-container">
-      <nav className="nav">
-        <button className={`nav-btn ${view === 'dashboard' ? 'active' : ''}`} onClick={() => setView('dashboard')}>
-          <LayoutDashboard size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-          Sales Dashboard
-        </button>
-        <button className={`nav-btn ${view === 'entry' ? 'active' : ''}`} onClick={() => setView('entry')}>
-          <PlusCircle size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-          New Bill Entry
-        </button>
-      </nav>
+      {!isAuthenticated ? (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#f1f5f9' }}>
+          <div className="form-card" style={{ maxWidth: '400px', width: '100%' }}>
+            <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>CRM Login</h2>
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label className="form-label">Username</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  required 
+                  value={loginData.username} 
+                  onChange={e => setLoginData({...loginData, username: e.target.value})} 
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Password</label>
+                <input 
+                  type="password" 
+                  className="form-input" 
+                  required 
+                  value={loginData.password} 
+                  onChange={e => setLoginData({...loginData, password: e.target.value})} 
+                />
+              </div>
+              {authError && <div style={{ color: '#ef4444', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>}
+              <button type="submit" className="submit-btn" style={{ width: '100%' }}>Sign In</button>
+            </form>
+          </div>
+        </div>
+      ) : (
+        <>
+          <nav className="nav">
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className={`nav-btn ${view === 'dashboard' ? 'active' : ''}`} onClick={() => setView('dashboard')}>
+                <LayoutDashboard size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+                Sales Dashboard
+              </button>
+              <button className={`nav-btn ${view === 'entry' ? 'active' : ''}`} onClick={() => setView('entry')}>
+                <PlusCircle size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+                New Bill Entry
+              </button>
+            </div>
+            <button className="nav-btn" onClick={handleLogout} style={{ background: '#f1f5f9', color: '#64748b' }}>
+              Logout ({localStorage.getItem('username')})
+            </button>
+          </nav>
 
-      {view === 'dashboard' ? (
+          {view === 'dashboard' ? (
         <div className="dashboard-view">
           <div className="stats-grid">
             <div className="stat-card">
