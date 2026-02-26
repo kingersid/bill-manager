@@ -2,34 +2,17 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const path = require('path');
 const { db, isPg } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET;
 
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Auth Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) return res.status(401).json({ error: 'Access denied, token missing' });
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid token' });
-    req.user = user;
-    next();
-  });
-};
-
-// Helper for unified queries (supports ? for both)
+// Helper for unified queries
 const runQuery = (sql, params = []) => {
   const normalizedSql = isPg ? sql.replace(/\?/g, (_, i, full) => `$${full.slice(0, i).split('?').length}`) : sql;
   return new Promise((resolve, reject) => {
@@ -38,7 +21,7 @@ const runQuery = (sql, params = []) => {
     } else {
       db.all(normalizedSql, params, function(err, rows) {
         if (err) return reject(err);
-        resolve({ rows, lastID: this.lastID }); // 'this' context works in function() but not () =>
+        resolve({ rows, lastID: this.lastID });
       });
     }
   });
@@ -59,58 +42,8 @@ const execCmd = (sql, params = []) => {
   });
 };
 
-// Auth Routes
-app.post('/api/auth/register', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
-  try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await execCmd("INSERT INTO users (username, password) VALUES (?, ?)", [username, hashedPassword]);
-    res.json({ message: 'User registered successfully' });
-  } catch (error) {
-    if (error.message.includes('UNIQUE constraint failed') || error.message.includes('duplicate key value')) {
-      return res.status(400).json({ error: 'Username already exists' });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  console.log(`Login attempt for user: ${username}`);
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
-  try {
-    const { rows } = await runQuery("SELECT * FROM users WHERE username = ?", [username]);
-    const user = rows[0];
-    if (!user) {
-      console.log('Login failed: User not found');
-      return res.status(400).json({ error: 'User not found' });
-    }
-
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      console.log('Login failed: Invalid password');
-      return res.status(400).json({ error: 'Invalid password' });
-    }
-
-    if (!JWT_SECRET) {
-      console.error('CRITICAL: JWT_SECRET is not defined in environment variables');
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-    console.log('Login successful');
-    res.json({ token, username: user.username });
-  } catch (err) {
-    console.error('Login error:', err.message);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Bills API
-app.post('/api/bills', authenticateToken, async (req, res) => {
+// Bills API (No Auth)
+app.post('/api/bills', async (req, res) => {
   const { 
     customer_name, customer_phone, customer_email, customer_address, 
     items, grand_total, total_pieces, bill_date 
@@ -142,7 +75,7 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/bills/:id', authenticateToken, async (req, res) => {
+app.delete('/api/bills/:id', async (req, res) => {
   const id = req.params.id;
   try {
     await execCmd("BEGIN");
@@ -156,7 +89,7 @@ app.delete('/api/bills/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/bills', authenticateToken, async (req, res) => {
+app.get('/api/bills', async (req, res) => {
   const sql = isPg ? `
     SELECT b.*, string_agg(bi.product_name, ', ') as products
     FROM bills b
@@ -178,7 +111,7 @@ app.get('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/bills/:id/items', authenticateToken, async (req, res) => {
+app.get('/api/bills/:id/items', async (req, res) => {
   try {
     const { rows } = await runQuery("SELECT * FROM bill_items WHERE bill_id = ?", [req.params.id]);
     res.json(rows);
@@ -187,7 +120,7 @@ app.get('/api/bills/:id/items', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/stats', authenticateToken, async (req, res) => {
+app.get('/api/stats', async (req, res) => {
   try {
     const { rows } = await runQuery("SELECT SUM(total_amount) as total_revenue, SUM(total_pieces) as total_pieces_sold, COUNT(id) as total_bills FROM bills");
     const row = rows[0];
@@ -201,7 +134,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/sales-trend', authenticateToken, async (req, res) => {
+app.get('/api/sales-trend', async (req, res) => {
   try {
     const { rows } = await runQuery("SELECT bill_date as date, SUM(total_amount) as revenue FROM bills GROUP BY bill_date ORDER BY bill_date ASC LIMIT 30");
     res.json(rows);
@@ -215,4 +148,4 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
